@@ -14,6 +14,7 @@ jobs:
       ARCH: arm64
       SUBARCH: arm64
       DEFCONFIG: defconfig
+      OUTDIR: out
 
     steps:
     - name: 📥 Checkout source
@@ -22,7 +23,7 @@ jobs:
         submodules: true
         fetch-depth: 1
 
-    - name: 🛠 Install build dependencies
+    - name: 🛠 Install dependencies
       run: |
         sudo apt update
         sudo apt install -y \
@@ -32,48 +33,53 @@ jobs:
           clang lld llvm \
           gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
 
-        echo "🔎 Toolchain versions:"
+        echo "✅ Toolchain versions:"
         clang --version
         ld.lld --version
         aarch64-linux-gnu-gcc --version
 
-    - name: 🧹 Clean kernel source
+    - name: 🧹 Clean kernel
       run: |
-        make mrproper
+        make O=$OUTDIR mrproper
 
     - name: ⚙️ Load defconfig
       run: |
-        make $DEFCONFIG
+        echo "Using defconfig: $DEFCONFIG"
+        make O=$OUTDIR $DEFCONFIG
 
-    - name: 🔧 Patch / Disable problematic configs (quiet)
+    - name: 🔧 Disable problematic Samsung options
       run: |
-        echo "Disabling Samsung options that break CI..."
-        for cfg in CONFIG_LD_IS_LLD CONFIG_EFI CONFIG_EFI_STUB CONFIG_ARM64_VDSO CONFIG_LTO CONFIG_CFI_CLANG CONFIG_FTRACE CONFIG_DYNAMIC_FTRACE; do
-          scripts/config --disable $cfg 2>/dev/null || true
+        echo "Disabling options that break CI..."
+        for cfg in CONFIG_LD_IS_LLD CONFIG_EFI CONFIG_EFI_STUB CONFIG_QCLD CONFIG_LTO CONFIG_CFI_CLANG CONFIG_FTRACE CONFIG_DYNAMIC_FTRACE CONFIG_FUNCTION_TRACER; do
+          scripts/config --file $OUTDIR/.config --disable $cfg 2>/dev/null || true
         done
         echo "Regenerating defconfig quietly..."
-        make olddefconfig > /dev/null
+        make O=$OUTDIR olddefconfig > /dev/null
 
-    - name: 🔨 Build kernel (LLVM + GCC cross)
+    - name: 🔨 Build kernel
       run: |
         make -j$(nproc) \
+          O=$OUTDIR \
           ARCH=arm64 \
           CC=clang \
           LD=ld.lld \
           LLVM=1 \
           LLVM_IAS=1 \
           CROSS_COMPILE=aarch64-linux-gnu- \
-          CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-          O=out
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-    - name: ✅ Verify build outputs
+    - name: ✅ Verify Image
       run: |
-        ls -lh out/arch/arm64/boot/
+        if [ ! -f $OUTDIR/arch/arm64/boot/Image.gz ]; then
+          echo "❌ Kernel build failed (Image.gz not found)"
+          exit 1
+        fi
+        ls -lh $OUTDIR/arch/arm64/boot/Image.gz
 
-    - name: 📦 Prepare AnyKernel3 ZIP
+    - name: 📦 AnyKernel3 ZIP
       run: |
         git clone https://github.com/osm0sis/AnyKernel3 --depth=1
-        cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
+        cp $OUTDIR/arch/arm64/boot/Image.gz AnyKernel3/
         cd AnyKernel3
         zip -r9 ../BlazeX-S20FE-$(date +%Y%m%d-%H%M).zip *
 
@@ -83,7 +89,7 @@ jobs:
         name: BlazeX-Kernel
         path: |
           BlazeX-S20FE-*.zip
-          out/arch/arm64/boot/Image.gz-dtb
+          $OUTDIR/arch/arm64/boot/Image.gz
         retention-days: 7
 
     - name: 🎉 Build finished
