@@ -1,0 +1,84 @@
+name: Build BlazeX SM8250 Kernel
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+      CROSS_COMPILE: aarch64-linux-gnu-
+      DEFCONFIG: defconfig
+
+    steps:
+    - name: 📥 Checkout source
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+        fetch-depth: 1
+
+    - name: 🛠 Install build dependencies (GCC toolchain)
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          bc bison build-essential curl flex git \
+          libelf-dev libssl-dev libncurses-dev \
+          python3 python-is-python3 zip \
+          gcc-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi \
+          binutils-aarch64-linux-gnu
+
+        aarch64-linux-gnu-gcc --version
+        aarch64-linux-gnu-ld.bfd --version
+
+    - name: 🧹 Clean kernel tree
+      run: |
+        make mrproper
+
+    - name: ⚙️ Load defconfig
+      run: |
+        make $DEFCONFIG
+
+    - name: 🔧 Patch config for CI
+      run: |
+        # Disable options that cause bad linker usage
+        scripts/config --disable CONFIG_LD_IS_LLD
+        scripts/config --disable CONFIG_EFI
+        scripts/config --disable CONFIG_EFI_STUB
+        scripts/config --disable CONFIG_ARM64_VDSO
+        scripts/config --disable CONFIG_LTO
+        scripts/config --disable CONFIG_CFI_CLANG
+        scripts/config --disable CONFIG_FTRACE
+        scripts/config --disable CONFIG_DYNAMIC_FTRACE
+
+        # Regenerate config
+        make olddefconfig
+
+    - name: 🔨 Build kernel (GCC + ld.bfd)
+      run: |
+        make -j$(nproc) \
+          LD=aarch64-linux-gnu-ld.bfd \
+          HOSTLD=ld.bfd \
+          CROSS_COMPILE=aarch64-linux-gnu-
+
+    - name: 📦 Verify kernel image
+      run: |
+        if [ ! -f arch/arm64/boot/Image ]; then
+          echo "❌ Kernel Image not found"
+          exit 1
+        fi
+        ls -lh arch/arm64/boot/Image
+
+    - name: 📤 Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: BlazeX-SM8250-Kernel
+        path: |
+          arch/arm64/boot/Image
+          arch/arm64/boot/Image.gz-dtb || true
