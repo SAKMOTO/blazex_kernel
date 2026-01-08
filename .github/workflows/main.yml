@@ -1,4 +1,4 @@
-name: Build BlazeX Kernel
+name: BlazeX Kernel Build
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
         submodules: true
         fetch-depth: 1
 
-    - name: 🛠 Install dependencies
+    - name: 🛠 Install build dependencies
       run: |
         sudo apt update
         sudo apt install -y \
@@ -33,10 +33,9 @@ jobs:
           clang lld llvm \
           gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
 
-        echo "✅ Toolchain versions:"
-        clang --version
+        which ld.lld
         ld.lld --version
-        aarch64-linux-gnu-gcc --version
+        clang --version
 
     - name: 🧹 Clean kernel
       run: |
@@ -44,16 +43,14 @@ jobs:
 
     - name: ⚙️ Load defconfig
       run: |
-        echo "Using defconfig: $DEFCONFIG"
         make O=$OUTDIR $DEFCONFIG
 
     - name: 🔧 Disable problematic Samsung options
       run: |
-        echo "Disabling options that break CI..."
         for cfg in CONFIG_LD_IS_LLD CONFIG_EFI CONFIG_EFI_STUB CONFIG_QCLD CONFIG_LTO CONFIG_CFI_CLANG CONFIG_FTRACE CONFIG_DYNAMIC_FTRACE CONFIG_FUNCTION_TRACER; do
           scripts/config --file $OUTDIR/.config --disable $cfg 2>/dev/null || true
         done
-        echo "Regenerating defconfig quietly..."
+        # Silence Kconfig interactive output
         make O=$OUTDIR olddefconfig > /dev/null
 
     - name: 🔨 Build kernel
@@ -70,10 +67,6 @@ jobs:
 
     - name: ✅ Verify Image
       run: |
-        if [ ! -f $OUTDIR/arch/arm64/boot/Image.gz ]; then
-          echo "❌ Kernel build failed (Image.gz not found)"
-          exit 1
-        fi
         ls -lh $OUTDIR/arch/arm64/boot/Image.gz
 
     - name: 📦 AnyKernel3 ZIP
